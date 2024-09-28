@@ -430,34 +430,120 @@ mod extended_attrs {
         })
     }
 
+    /// Get the Access Control Lists from a file or directory
+    #[cfg(target_os = "linux")]
+    pub fn get_acls(path: &Path) -> impl Iterator<Item = Attribute> {
+        use posix_acl::{ACLEntry, PosixACL, Qualifier};
+
+        // None if we want to ignore (because it is redundant with the default
+        // unix permissions)
+        fn get_name(qual: Qualifier) -> Option<String> {
+            match qual {
+                Qualifier::Group(g) => Some({
+                    let name = uzers::get_group_by_gid(g)
+                        .map(|n| OsStr::to_string_lossy(n.name()).into())
+                        .unwrap_or(format!("{g:}"));
+                    format!(":{name}")
+                }),
+                Qualifier::User(u) => Some({
+                    let name = uzers::get_user_by_uid(u)
+                        .map(|n| OsStr::to_string_lossy(n.name()).into())
+                        .unwrap_or(format!("{u:}"));
+                    format!("{name}:")
+                }),
+                Qualifier::Mask => Some("mask".into()),
+                Qualifier::Undefined => Some("undefined".into()),
+                Qualifier::UserObj | Qualifier::GroupObj | Qualifier::Other => None,
+            }
+        }
+
+        fn print_permissions(perm: u32) -> String {
+            let flags = [0b100, 0b010, 0b001].into_iter();
+            let letters = ['r', 'w', 'x'].into_iter();
+            Iterator::zip(flags, letters)
+                .map(
+                    |(flag, letter)| {
+                        if (perm & flag) == flag {
+                            letter
+                        } else {
+                            '-'
+                        }
+                    },
+                )
+                .collect()
+        }
+
+        let acl = PosixACL::read_acl(path).ok();
+        let default_acl = if path.is_dir() {
+            PosixACL::read_default_acl(path).ok()
+        } else {
+            None
+        };
+
+        let acl = acl
+            .into_iter()
+            .flat_map(|a| a.entries().into_iter())
+            .filter_map(|ACLEntry { qual, perm }| {
+                Some(Attribute {
+                    name: format!("ACL {}", get_name(qual)?),
+                    value: Some(print_permissions(perm).into_bytes()),
+                })
+            });
+        let default_acl = default_acl
+            .into_iter()
+            .flat_map(|a| a.entries().into_iter())
+            .filter_map(|ACLEntry { qual, perm }| {
+                Some(Attribute {
+                    name: format!("default ACL {}", get_name(qual)?),
+                    value: Some(print_permissions(perm).into_bytes()),
+                })
+            });
+        std::iter::Iterator::chain(default_acl, acl)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn acls(path: &Path, follow_symlinks: bool) -> impl Iterator<Attribute> {
+        None
+    }
+
     // Get a vector of all attribute names and values on `path`
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub fn attributes(path: &Path, follow_symlinks: bool) -> io::Result<Vec<Attribute>> {
+        let acls = get_acls(path).map(Ok);
         let path = CString::new(path.as_os_str().as_bytes())
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         let attr_names = list_attributes(&path, follow_symlinks, os::list_xattr)?;
 
-        #[cfg(target_os = "linux")]
-        if attr_names.is_empty() {
+        let selinux_attrs = if cfg!(target_os = "linux") && attr_names.is_empty() {
             // Some filesystems, like sysfs, return nothing on listxattr, even though the security
             // attribute is set.
-            return get_selinux_attribute(&path, follow_symlinks);
+            Some(get_selinux_attribute(&path, follow_symlinks))
+        } else {
+            None
         }
+        .transpose()?
+        .into_iter()
+        .flat_map(IntoIterator::into_iter)
+        .map(Ok);
 
-        let mut attrs = Vec::with_capacity(attr_names.len());
-        for attr_name in attr_names {
-            if let Some(name) = attr_name.to_str() {
+        let attrs = attr_names
+            .iter()
+            .filter_map(|x| x.to_str())
+            .filter(|x| {
+                !(cfg!(target_os = "linux")
+                    && matches!(*x, "system.posix_acl_default" | "system.posix_acl_access"))
+            })
+            .map(|name| {
                 let attr_name =
                     CString::new(name).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
                 let value = get_attribute(&path, &attr_name, follow_symlinks, os::get_xattr)?;
-                attrs.push(Attribute {
+                Ok(Attribute {
                     name: name.to_string(),
                     value,
-                });
-            }
-        }
+                })
+            });
 
-        Ok(attrs)
+        acls.chain(attrs).chain(selinux_attrs).collect()
     }
 
     #[cfg(any(target_os = "netbsd", target_os = "freebsd"))]

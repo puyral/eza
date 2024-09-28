@@ -93,7 +93,9 @@
           pkgs.darwin.apple_sdk.frameworks.Security
         ];
 
-        buildInputs = [ pkgs.zlib ] ++ darwinBuildInputs;
+        linuxBuildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.acl ];
+
+        buildInputs = [ pkgs.zlib ] ++ darwinBuildInputs ++ linuxBuildInputs;
       in
       rec {
         # For `nix fmt`

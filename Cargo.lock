@@ -3,6 +3,15 @@
 version = 3
 
 [[package]]
+name = "acl-sys"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbc079f9bdd3124fd18df23c67f7e0f79d24751ae151dcffd095fcade07a3eb2"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -459,6 +468,7 @@ dependencies = [
  "percent-encoding",
  "phf",
  "plist",
+ "posix-acl",
  "proc-mounts",
  "rayon",
  "serde",
@@ -992,6 +1002,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38f6d39893cca0701371e3c27294f09797214b86f1fb951b89ade8ec04e2abab"
 dependencies = [
  "plotters-backend",
+]
+
+[[package]]
+name = "posix-acl"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9928b761309e4a4ca4f2d90eb03029142e3f7164107e18db4d46516515b87441"
+dependencies = [
+ "acl-sys",
+ "libc",
 ]
 
 [[package]]
